@@ -23,6 +23,23 @@ public class QuitPacket : Packet
     }
 }
 
+public class SelectFacetPacket : Packet
+{
+    public SelectFacetPacket(int index) : base(0x02, 0)
+    {
+        Writer.Write((byte)0x20);
+        Writer.Write((byte)index);
+    }
+}
+
+public class RequestFacetListPacket : Packet
+{
+    public RequestFacetListPacket() : base(0x02, 0)
+    {
+        Writer.Write((byte)0x21);
+    }
+}
+
 public class RequestBlocksPacket : Packet
 {
     public RequestBlocksPacket(PointU16 coord) : base(0x04, 0)

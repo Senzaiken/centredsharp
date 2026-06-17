@@ -8,15 +8,16 @@ class BlockPacket : Packet
 {
     public BlockPacket(IEnumerable<PointU16> coords, NetState<CEDServer> ns) : base(0x04, 0)
     {
+        var landscape = ns.Landscape();
         foreach (var coord in coords)
         {
-            var mapBlock = ns.Parent.Landscape.GetLandBlock(coord.X, coord.Y);
-            var staticsBlock = ns.Parent.Landscape.GetStaticBlock(coord.X, coord.Y);
+            var mapBlock = landscape.GetLandBlock(coord.X, coord.Y);
+            var staticsBlock = landscape.GetStaticBlock(coord.X, coord.Y);
 
             coord.Write(Writer);
             mapBlock.Write(Writer);
             Writer.Write((ushort)staticsBlock.TotalTilesCount);
-            staticsBlock.SortTiles(ref ns.Parent.Landscape.TileDataProvider.StaticTiles);
+            staticsBlock.SortTiles(ref landscape.TileDataProvider.StaticTiles);
             staticsBlock.Write(Writer);
         }
     }
@@ -106,6 +107,23 @@ public class ProtocolVersionPacket : Packet
     }
 }
 
+public class FacetListPacket : Packet
+{
+    public FacetListPacket(CEDServer server) : base(0x02, 0)
+    {
+        Writer.Write((byte)0x22);
+        var landscapes = server.Landscapes;
+        Writer.Write((byte)landscapes.Count);
+        foreach (var landscape in landscapes)
+        {
+            Writer.Write((byte)landscape.FacetIndex);
+            Writer.Write(landscape.Width);
+            Writer.Write(landscape.Height);
+            Writer.WriteStringNull(landscape.Name);
+        }
+    }
+}
+
 public class LoginResponsePacket : Packet
 {
     public LoginResponsePacket(LoginState state, NetState<CEDServer>? ns = null) : base(0x02, 0)
@@ -118,14 +136,15 @@ public class LoginResponsePacket : Packet
             Writer.Write((byte)ns.AccessLevel());
             if (ns.ProtocolVersion == ProtocolVersion.CentrEDPlus)
                 Writer.Write((uint)Math.Abs((DateTime.Now - ns.Parent.StartTime).TotalSeconds));
-            Writer.Write(ns.Parent.Landscape.Width);
-            Writer.Write(ns.Parent.Landscape.Height);
+            var landscape = ns.Landscape();
+            Writer.Write(landscape.Width);
+            Writer.Write(landscape.Height);
             if (ns.ProtocolVersion == ProtocolVersion.CentrEDPlus)
             {
                 uint flags = 0xF0000000;
-                if (ns.Parent.Landscape.TileDataProvider.Version == TileDataVersion.HighSeas)
+                if (landscape.TileDataProvider.Version == TileDataVersion.HighSeas)
                     flags |= 0x8;
-                if (ns.Parent.Landscape.IsUop)
+                if (landscape.IsUop)
                     flags |= 0x10;
 
                 Writer.Write(flags);
@@ -202,8 +221,8 @@ public class SetClientPosPacket : Packet
     public SetClientPosPacket(NetState<CEDServer> ns) : base(0x0C, 0)
     {
         Writer.Write((byte)0x04);
-        Writer.Write((ushort)Math.Clamp(ns.Account().LastPos.X, 0, ns.Parent.Landscape.WidthInTiles - 1));
-        Writer.Write((ushort)Math.Clamp(ns.Account().LastPos.Y, 0, ns.Parent.Landscape.HeightInTiles - 1));
+        Writer.Write((ushort)Math.Clamp(ns.Account().LastPos.X, 0, ns.Landscape().WidthInTiles - 1));
+        Writer.Write((ushort)Math.Clamp(ns.Account().LastPos.Y, 0, ns.Landscape().HeightInTiles - 1));
     }
 }
 

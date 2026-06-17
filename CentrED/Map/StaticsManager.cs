@@ -7,6 +7,8 @@ public class StaticsManager
 {
     private static readonly List<StaticObject> EmptyList = [];
     private static readonly ReadOnlyCollection<StaticObject> EmptyReadOnly = EmptyList.AsReadOnly();
+
+    public MapManager MapManager = null!;
     
     private ushort _Width;
     private ushort _Height;
@@ -87,7 +89,7 @@ public class StaticsManager
     
     public void Add(StaticTile staticTile)
     {
-        var so = new StaticObject(staticTile);
+        var so = new StaticObject(staticTile, MapManager);
         var index = Index(staticTile);
         var list = _tiles[index];
         if (list == null)

@@ -22,13 +22,21 @@ public class MinimapWindow : Window
 
     protected override void InternalDraw()
     {
-        if (!CEDClient.Running)
+        var world = CEDGame.Worlds.Focused ?? CEDGame.Worlds.Active;
+        if (world == null || !world.Client.Running)
         {
             ImGui.Text(LangManager.Get(NOT_CONNECTED));
             return;
         }
+        var radar = world.RadarMap;
+        if (radar?.Texture == null)
+        {
+            ImGui.Text(LangManager.Get(NOT_CONNECTED));
+            return;
+        }
+        var map = world.Map;
         ImGui.Text(LangManager.Get(FAVORITES));
-        if (ImGui.BeginChild("Favorites", new Vector2(RadarMap.Instance.Texture.Width, 100)))
+        if (ImGui.BeginChild("Favorites", new Vector2(radar.Texture.Width, 100)))
         {
             ImGui.InputText(LangManager.Get(NAME), ref _inputFavoriteName, 64);
             ImGui.SameLine();
@@ -41,8 +49,8 @@ public class MinimapWindow : Window
                     _inputFavoriteName,
                     new()
                     {
-                        X = (ushort)CEDGame.MapManager.TilePosition.X,
-                        Y = (ushort)CEDGame.MapManager.TilePosition.Y
+                        X = (ushort)map.TilePosition.X,
+                        Y = (ushort)map.TilePosition.Y
                     }
                 );
                 ProfileManager.Save();
@@ -56,7 +64,7 @@ public class MinimapWindow : Window
                 {
                     ImGui.SameLine();
                 }
-                if (ImGui.GetCursorPos().X + 75 >= RadarMap.Instance.Texture.Width)
+                if (ImGui.GetCursorPos().X + 75 >= radar.Texture.Width)
                 {
                     ImGui.NewLine();
                 }
@@ -66,7 +74,7 @@ public class MinimapWindow : Window
                 //tooltip for button what shows the key
                 if (ImGui.Button($"{name}", new Vector2(75, 19)))
                 {
-                    CEDGame.MapManager.TilePosition = new Point(coords.X, coords.Y);
+                    map.TilePosition = new Point(coords.X, coords.Y);
                 }
                 ImGuiEx.Tooltip($"X:{coords.X} Y:{coords.Y}");
 
@@ -114,13 +122,13 @@ public class MinimapWindow : Window
         ImGui.PushItemWidth(100);
         if (ImGui.InputInt2("X/Y", ref mapPos[0]))
         {
-            CEDGame.MapManager.TilePosition = new Point(mapPos[0], mapPos[1]);
+            map.TilePosition = new Point(mapPos[0], mapPos[1]);
         };
         ImGui.PopItemWidth();
         if (ImGui.BeginChild("Minimap", Vector2.Zero, ImGuiChildFlags.None, ImGuiWindowFlags.HorizontalScrollbar))
         {
             var currentPos = ImGui.GetCursorScreenPos();
-            var tex = RadarMap.Instance.Texture;
+            var tex = radar.Texture;
             CEDGame.UIManager.DrawImage(tex, tex.Bounds);
 
             ImGui.SetCursorScreenPos(currentPos);
@@ -133,7 +141,7 @@ public class MinimapWindow : Window
             {
                 if (ImGui.Button(LangManager.Get(REFRESH)))
                 {
-                    CEDClient.Send(new RequestRadarMapPacket());
+                    radar.Refresh();
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.EndPopup();
@@ -144,18 +152,18 @@ public class MinimapWindow : Window
                 var newPos = (ImGui.GetMousePos() - currentPos) * 8;
                 if (held)
                 {
-                    CEDGame.MapManager.TilePosition = new Point((int)newPos.X, (int)newPos.Y);
+                    map.TilePosition = new Point((int)newPos.X, (int)newPos.Y);
                 }
                 mapPos[0] = (int)newPos.X;
                 mapPos[1] = (int)newPos.Y;
             }
             else
             {
-                mapPos[0] = CEDGame.MapManager.TilePosition.X;
-                mapPos[1] = CEDGame.MapManager.TilePosition.Y;
+                mapPos[0] = map.TilePosition.X;
+                mapPos[1] = map.TilePosition.Y;
             }
 
-            var rect = CEDGame.MapManager.ViewRange;
+            var rect = map.ViewRange;
             var center = new Point(rect.X1 + rect.Width / 2, rect.Y1 + rect.Height / 2);
             var p1 = currentPos + new Vector2(rect.X1 / 8, center.Y / 8);
             var p2 = currentPos + new Vector2(center.X / 8, rect.Y1 / 8);

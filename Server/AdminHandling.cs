@@ -38,8 +38,7 @@ public class AdminHandling
     private static void OnFlushPacket(SpanReader reader, NetState<CEDServer> ns)
     {
         ns.LogDebug("Server OnFlushPacket");
-        ns.Parent.Landscape.Flush();
-        ns.Parent.Config.Flush();
+        ns.Parent.Save();
     }
 
     private static void OnShutdownPacket(SpanReader reader, NetState<CEDServer> ns)

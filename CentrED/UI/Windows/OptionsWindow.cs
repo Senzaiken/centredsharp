@@ -1,4 +1,5 @@
 ﻿using CentrED.Lights;
+using CentrED.Map;
 using Hexa.NET.ImGui;
 using Microsoft.Xna.Framework.Input;
 using static CentrED.Application;
@@ -18,6 +19,8 @@ public class OptionsWindow : Window
     public override ImGuiWindowFlags WindowFlags => ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoResize;
 
     private int _lightLevel = 30;
+    private string _mapsFolder = Config.Instance.Facets.MapsFolder;
+    private int _basePort = Config.Instance.Facets.BasePort;
     private Vector4 _virtualLayerFillColor = new(0.2f, 0.2f, 0.2f, 0.1f);
     private Vector4 _virtualLayerBorderColor = new(1.0f, 1.0f, 1.0f, 1.0f);
     private Vector4 _terrainGridFlatColor = new(0.5f, 0.5f, 0.0f, 0.5f);
@@ -126,8 +129,166 @@ public class OptionsWindow : Window
                 }
                 ImGui.EndTabItem();
             }
+            DrawFacetOptions();
             ImGui.EndTabBar();
         }
+    }
+
+    private void DrawFacetOptions()
+    {
+        if (!ImGui.BeginTabItem("Facets"))
+            return;
+
+        var settings = Config.Instance.Facets;
+        var controller = CEDGame.FacetController;
+
+        ImGui.TextWrapped
+        (
+            "Each mapX.mul in the maps folder becomes a world tab. Opening the first tab starts a local " +
+            "embedded server that hosts every listed map; each tab then renders on demand. Restart to " +
+            "pick up newly-added maps."
+        );
+        ImGui.Separator();
+
+        if (ImGui.InputText("Maps folder", ref _mapsFolder, 1024))
+            settings.MapsFolder = _mapsFolder;
+        ImGui.SameLine();
+        if (ImGui.Button("..."))
+        {
+            var def = _mapsFolder.Length == 0 ? Environment.CurrentDirectory : _mapsFolder;
+            if (TinyFileDialogs.TrySelectFolder("Select Maps Folder", def, out var newPath))
+            {
+                _mapsFolder = newPath;
+                settings.MapsFolder = newPath;
+                Config.Save();
+                controller.Refresh();
+                controller.RequestSync();
+            }
+        }
+
+        if (ImGui.InputInt("Base port", ref _basePort))
+            settings.BasePort = _basePort;
+
+        if (ImGui.Button("Rescan"))
+        {
+            Config.Save();
+            controller.Refresh();
+            controller.RequestSync();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Save settings"))
+        {
+            Config.Save();
+            controller.Refresh();
+            controller.RequestSync();
+        }
+
+        if (controller.Status.Length > 0)
+            ImGui.TextColored(ImGuiColor.Pink, controller.Status);
+
+        ImGui.Separator();
+        var facets = controller.Facets.ToArray();
+        if (facets.Length == 0)
+        {
+            ImGui.TextColored(ImGuiColor.Red, "No mapX.mul files found in the maps folder.");
+            ImGui.EndTabItem();
+            return;
+        }
+
+        if (ImGui.BeginTable("FacetsTable", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Name");
+            ImGui.TableSetupColumn("Width");
+            ImGui.TableSetupColumn("Height");
+            ImGui.TableSetupColumn("Port");
+            ImGui.TableSetupColumn("");
+            ImGui.TableHeadersRow();
+
+            foreach (var facet in facets)
+            {
+                ImGui.TableNextRow();
+                var isOpen = controller.IsOpen(facet.Index);
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(150);
+                var name = facet.Name;
+                if (ImGui.InputText($"##name{facet.Index}", ref name, 64))
+                    SetFacetName(settings, facet, name);
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    Config.Save();
+                if (!facet.DimensionsKnown)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(ImGuiColor.Pink, "(set size)");
+                }
+                if (!facet.HasStatics)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(ImGuiColor.Red, "(no statics)");
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(80);
+                int w = facet.Width;
+                if (ImGui.InputInt($"##w{facet.Index}", ref w))
+                    SetFacetSize(settings, facet, w, facet.Height);
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    Config.Save();
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(80);
+                int h = facet.Height;
+                if (ImGui.InputInt($"##h{facet.Index}", ref h))
+                    SetFacetSize(settings, facet, facet.Width, h);
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    Config.Save();
+
+                ImGui.TableNextColumn();
+                ImGui.Text(facet.Port.ToString());
+
+                ImGui.TableNextColumn();
+                ImGui.BeginDisabled(controller.Switching || !facet.DimensionsKnown || !facet.HasStatics);
+                if (ImGui.Button($"{(isOpen ? "Focus" : "Open")}##{facet.Index}"))
+                    controller.OpenWorld(facet);
+                ImGui.EndDisabled();
+                if (controller.IsHosted(facet.Index))
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(ImGuiColor.Green, "hosted");
+                }
+            }
+            ImGui.EndTable();
+        }
+        ImGui.EndTabItem();
+    }
+
+    private static void SetFacetName(FacetSettings settings, Facet facet, string name)
+    {
+        facet.Name = name;
+        GetOrAddOverride(settings, facet).Name = name;
+    }
+
+    private static void SetFacetSize(FacetSettings settings, Facet facet, int width, int height)
+    {
+        if (width > 0)
+            facet.Width = (ushort)Math.Min(width, ushort.MaxValue);
+        if (height > 0)
+            facet.Height = (ushort)Math.Min(height, ushort.MaxValue);
+        facet.DimensionsKnown = facet.Width > 0 && facet.Height > 0;
+        var ovr = GetOrAddOverride(settings, facet);
+        ovr.Width = facet.Width;
+        ovr.Height = facet.Height;
+    }
+
+    private static FacetOverride GetOrAddOverride(FacetSettings settings, Facet facet)
+    {
+        var ovr = settings.Overrides.Find(o => o.Index == facet.Index);
+        if (ovr == null)
+        {
+            ovr = new FacetOverride { Index = facet.Index, Name = facet.Name };
+            settings.Overrides.Add(ovr);
+        }
+        return ovr;
     }
 
     private string assigningActionName = "";

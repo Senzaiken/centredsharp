@@ -1,41 +1,45 @@
-﻿using CentrED.Client;
+using CentrED.Client;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using static CentrED.Application;
 
 namespace CentrED.Map;
 
 public class RadarMap
 {
-    private static RadarMap _instance;
-    public static RadarMap Instance => _instance;
-
-    private Texture2D _texture = null!;
-    public Texture2D Texture => _texture;
+    private readonly GraphicsDevice _gd;
+    private readonly CentrEDClient _client;
+    private Texture2D? _texture;
+    public Texture2D? Texture => _texture;
     public bool IsReady => _texture != null;
 
-    private RadarMap(GraphicsDevice gd)
+    public RadarMap(GraphicsDevice gd, CentrEDClient client)
     {
-        CEDClient.Connected += () =>
-        {
-            _texture = new Texture2D(gd, CEDClient.Width, CEDClient.Height);
-            CEDClient.Send(new RequestRadarMapPacket());
-        };
-
-        CEDClient.RadarData += RadarData;
-        CEDClient.RadarUpdate += RadarUpdate;
+        _gd = gd;
+        _client = client;
+        client.Connected += OnConnected;
+        client.RadarData += RadarData;
+        client.RadarUpdate += RadarUpdate;
     }
 
-    public static void Initialize(GraphicsDevice gd)
+    public void Refresh()
     {
-        _instance = new RadarMap(gd);
+        if (_client.Running)
+            _client.Send(new RequestRadarMapPacket());
+    }
+
+    private void OnConnected()
+    {
+        _texture = new Texture2D(_gd, _client.Width, _client.Height);
+        _client.Send(new RequestRadarMapPacket());
     }
 
     private unsafe void RadarData(ReadOnlySpan<ushort> data)
     {
-        var width = CEDClient.Width;
-        var height = CEDClient.Height;
+        if (_texture == null)
+            return;
+        var width = _client.Width;
+        var height = _client.Height;
         uint[] buffer = System.Buffers.ArrayPool<uint>.Shared.Rent(data.Length);
         try
         {
@@ -60,6 +64,6 @@ public class RadarMap
 
     private void RadarUpdate(ushort x, ushort y, ushort color)
     {
-        _texture.SetData(0, new Rectangle(x, y, 1, 1), new[] { HuesHelper.Color16To32(color) | 0xFF_00_00_00 }, 0, 1);
+        _texture?.SetData(0, new Rectangle(x, y, 1, 1), new[] { HuesHelper.Color16To32(color) | 0xFF_00_00_00 }, 0, 1);
     }
 }

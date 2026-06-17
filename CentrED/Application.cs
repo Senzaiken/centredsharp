@@ -11,7 +11,9 @@ public class Application
 
     public static CentrEDGame CEDGame { get; private set; } = null!;
     public static CEDServer? CEDServer;
-    public static readonly CentrEDClient CEDClient = new();
+    private static readonly CentrEDClient _bootstrapClient = new();
+    public static CentrEDClient BootstrapClient => _bootstrapClient;
+    public static CentrEDClient CEDClient => CEDGame?.Worlds?.ActiveClient ?? _bootstrapClient;
     public static readonly Metrics Metrics = new();
 
     [STAThread]
