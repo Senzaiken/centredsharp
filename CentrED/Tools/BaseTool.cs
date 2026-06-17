@@ -64,6 +64,7 @@ public abstract class BaseTool : Tool
         Pressed = false;
         AreaMode = false;
         TopTilesOnly = false;
+        MapManager.ClearGhosts();
     }
 
     public sealed override void OnKeyPressed(Keys key)
@@ -80,7 +81,7 @@ public abstract class BaseTool : Tool
             }
         }
     }
-    
+
     public sealed override void OnKeyReleased(Keys key)
     {
         if (!Pressed)
@@ -112,7 +113,7 @@ public abstract class BaseTool : Tool
         {
             if (AreaMode)
             {
-                foreach (var to in MapManager.GetTiles(AreaStartTile, o, TopTilesOnly))
+                foreach (var to in MapManager.GetTiles(AreaStartTile, o, TopTilesOnly).ToList())
                 {
                     if (MapManager.CanEdit(to))
                     {
@@ -132,8 +133,9 @@ public abstract class BaseTool : Tool
             }
         }
         Pressed = false;
-        
+
         CEDClient.EndUndoGroup();
+        MapManager.ClearGhosts();
     }
 
     
