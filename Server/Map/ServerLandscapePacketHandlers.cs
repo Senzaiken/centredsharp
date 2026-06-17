@@ -39,7 +39,6 @@ public partial class ServerLandscape
     
     private void OnRequestBlocksPacket(SpanReader reader, NetState<CEDServer> ns)
     {
-        ns.LogDebug("Server OnRequestBlocksPacket");
         if (!ns.ValidateAccess(AccessLevel.View))
             return;
         var blocksCount = (reader.Remaining) / 4; // x and y, both 2 bytes
@@ -47,7 +46,6 @@ public partial class ServerLandscape
         for (var i = 0; i < blocksCount; i++)
         {
             coords[i] = reader.ReadPointU16();
-            ns.LogDebug($"Requested x={coords[i].X} y={coords[i].Y}");
         }
         foreach (var chunk in coords.Chunk(250))
         {
@@ -62,7 +60,6 @@ public partial class ServerLandscape
 
     private void OnFreeBlockPacket(SpanReader reader, NetState<CEDServer> ns)
     {
-        ns.LogDebug("Server OnFreeBlockPacket");
         if (!ns.ValidateAccess(AccessLevel.View))
             return;
         var x = reader.ReadUInt16();
@@ -85,6 +82,7 @@ public partial class ServerLandscape
         var newId = reader.ReadUInt16();
         AssertLandTileId(newId);
         InternalSetLandId(tile, newId);
+        OnLandReplaced(tile, newId, newZ);
 
         LandBlock block = tile.Block!;
         var packet = new DrawMapPacket(tile);
@@ -109,6 +107,7 @@ public partial class ServerLandscape
         AssertStaticTileId(tile.Id);
         AssertHue(tile.Hue);
         InternalAddStatic(block, tile);
+        OnStaticTileAdded(tile);
 
         block.SortTiles(ref TileDataProvider.StaticTiles);
 
@@ -136,6 +135,7 @@ public partial class ServerLandscape
             return;
 
         InternalRemoveStatic(block, tile);
+        OnStaticTileRemoved(tile);
 
         var packet = new DeleteStaticPacket(tile);
         foreach (var netState in GetBlockSubscriptions(block.X, block.Y))
@@ -163,6 +163,7 @@ public partial class ServerLandscape
         var newZ = reader.ReadSByte();
         var packet = new ElevateStaticPacket(tile, newZ);
         InternalSetStaticZ(tile, newZ);
+        OnStaticTileElevated(tile, newZ);
         block.SortTiles(ref TileDataProvider.StaticTiles);
 
         foreach (var netState in GetBlockSubscriptions(block.X, block.Y))
@@ -206,6 +207,7 @@ public partial class ServerLandscape
         var movePacket = new MoveStaticPacket(tile, newX, newY);
 
         ns.LogDebug($"Moving {tile} to {newX},{newY}");
+        OnStaticTileMoved(tile, newX, newY);
         InternalRemoveStatic(sourceBlock, tile);
         InternalSetStaticPos(tile, newX, newY);
         InternalAddStatic(targetBlock, tile);
@@ -255,6 +257,7 @@ public partial class ServerLandscape
         AssertHue(newHue);
         var packet = new HueStaticPacket(tile, newHue);
         InternalSetStaticHue(tile, newHue);
+        OnStaticTileHued(tile, newHue);
 
         foreach (var netState in GetBlockSubscriptions(block.X, block.Y))
         {
@@ -379,6 +382,7 @@ public partial class ServerLandscape
                     {
                         clients[netState].Add(new PointU16(blockX, blockY));
                     }
+                    OnBlockUpdated(GetBlock(blockX, blockY));
                 }
             }
 
@@ -392,6 +396,7 @@ public partial class ServerLandscape
                 {
                     clients[netState].Add(new PointU16(blockX, blockY));
                 }
+                OnBlockUpdated(GetBlock(blockX, blockY));
 
                 UpdateRadar(ns, (ushort)(blockX * 8), (ushort)(blockY * 8));
             }

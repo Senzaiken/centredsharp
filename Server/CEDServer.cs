@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using CentrED.Network;
+using CentrED.Server.Bridge;
 using CentrED.Server.Config;
 using CentrED.Server.Map;
 using CentrED.Utility;
@@ -19,6 +20,7 @@ public class CEDServer : ILogging, IDisposable
     public ConfigRoot Config { get; }
     public List<ServerLandscape> Landscapes { get; } = new();
     public ServerLandscape Landscape => Landscapes[0];
+    public UOBridgeServer? UOBridge { get; }
     public HashSet<NetState<CEDServer>> Clients { get; } = new(8);
     private readonly Dictionary<NetState<CEDServer>, ServerLandscape> _clientLandscape = new();
 
@@ -65,6 +67,10 @@ public class CEDServer : ILogging, IDisposable
         if (Landscapes.Count == 0)
             throw new InvalidOperationException("No facets could be loaded.");
         Listener = Bind(new IPEndPoint(Config.BindAddress, Config.Port));
+        if (Config.UOBridge.Enabled)
+        {
+            UOBridge = new UOBridgeServer(this);
+        }
         LogInfo("Initialization done");
     }
 
@@ -208,6 +214,7 @@ public class CEDServer : ILogging, IDisposable
             {
                 ProcessConnectedQueue();
                 ProcessNetStates();
+                UOBridge?.Update();
 
                 AutoSave();
                 AutoBackup();
@@ -410,6 +417,7 @@ public class CEDServer : ILogging, IDisposable
 
     public void Dispose()
     {
+        UOBridge?.Dispose();
         Listener.Dispose();
         foreach (var landscape in Landscapes)
             landscape.Dispose();

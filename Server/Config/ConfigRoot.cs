@@ -21,6 +21,7 @@ public class ConfigRoot
     public List<Account> Accounts { get; set; } = new();
     public List<Region> Regions { get; set; } = new();
     public Autobackup AutoBackup { get; set; } = new();
+    public UOBridgeConfig UOBridge { get; set; } = new();
     
     public bool Changed { get; set; }
     public string FilePath { get; set; } = DefaultPath;
@@ -224,6 +225,7 @@ public class ConfigRoot
         }
         writer.WriteEndElement();
         AutoBackup.Write(writer);
+        UOBridge.Write(writer);
 
         writer.WriteEndElement();
     }
@@ -288,6 +290,10 @@ public class ConfigRoot
 
                     case "AutoBackup":
                         result.AutoBackup = Autobackup.Read(reader);
+                        break;
+
+                    case "UOBridge":
+                        result.UOBridge = UOBridgeConfig.Read(reader);
                         break;
                 }
             }

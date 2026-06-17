@@ -78,6 +78,7 @@ public class ConnectionHandling
             ns.SendCompressed(new ClientListPacket(ns));
             ns.Parent.Broadcast(new ClientConnectedPacket(ns));
             ns.Send(new SetClientPosPacket(ns));
+            ns.Parent.UOBridge?.SendPlayerSnapshot(ns);
         }
     }
 

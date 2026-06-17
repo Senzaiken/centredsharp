@@ -179,6 +179,7 @@ public class MapManager
         Client.StaticTileHued += HueStatic;
         Client.AfterStaticChanged += AfterStaticChanged;
         Client.Moved += (x, y) => TilePosition = new Point(x,y);
+        Client.GamePlayersChanged += () => _gamePlayerMarkersDirty = true;
         #if DEBUG
         Client.LoggedDebug += Console.WriteLine;
         Client.LoggedInfo += Console.WriteLine;
@@ -2594,7 +2595,44 @@ public class MapManager
         {
             DrawStatic(tile);
         }
+        RebuildGamePlayerMarkersIfNeeded();
+        foreach (var marker in _gamePlayerMarkers)
+        {
+            DrawStatic(marker);
+        }
         _mapRenderer.End();
+    }
+
+    private const ushort GamePlayerMarkerArt = 0x2106;
+    private const ushort GamePlayerMarkerHue = 0x0058;
+    private readonly List<StaticObject> _gamePlayerMarkers = new();
+    private bool _gamePlayerMarkersDirty;
+
+    private void RebuildGamePlayerMarkersIfNeeded()
+    {
+        if (!_gamePlayerMarkersDirty)
+            return;
+        _gamePlayerMarkersDirty = false;
+        _gamePlayerMarkers.Clear();
+        foreach (var player in Client.GamePlayers.Values)
+        {
+            _gamePlayerMarkers.Add(new StaticObject(new StaticTile(GamePlayerMarkerArt, player.X, player.Y, player.Z, GamePlayerMarkerHue)));
+        }
+    }
+
+    public Vector2? GamePlayerScreenPosition(GamePlayer player)
+    {
+        const float headHeight = 14f;
+        var world = new Vector3(player.X * TILE_SIZE, player.Y * TILE_SIZE, FlatView ? 0 : (player.Z + headHeight) * TILE_Z_SCALE);
+        var clip = Vector4.Transform(new Vector4(world, 1f), Camera.WorldViewProj);
+        if (clip.W <= 0)
+            return null;
+        var ndcX = clip.X / clip.W;
+        var ndcY = clip.Y / clip.W;
+        var screen = new Vector2((ndcX + 1f) * 0.5f * Camera.ScreenSize.Width, (1f - ndcY) * 0.5f * Camera.ScreenSize.Height);
+        if (screen.X < 0 || screen.Y < 0 || screen.X > Camera.ScreenSize.Width || screen.Y > Camera.ScreenSize.Height)
+            return null;
+        return screen;
     }
 
     public void ApplyLights()

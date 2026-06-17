@@ -4,6 +4,8 @@ public class Logger
 {
     public TextWriter Out = Console.Out;
 
+    public static bool DebugEnabled;
+
     public void LogInfo(string log)
     {
         Log("INFO", log);
@@ -21,9 +23,8 @@ public class Logger
 
     public void LogDebug(string log)
     {
-#if DEBUG
+        if (DebugEnabled)
             Log("DEBUG", log);
-#endif
     }
 
     internal void Log(string level, string log)

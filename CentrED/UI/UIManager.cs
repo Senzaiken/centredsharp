@@ -303,9 +303,10 @@ public class UIManager
         DrawMainMenu();
         DrawStatusBar();
         DrawCachingOverlay();
+        DrawGamePlayerNames();
         foreach (var window in AllWindows.Values)
-        { 
-            window.Draw();   
+        {
+            window.Draw();
         }
         DebugWindow.Draw();
         if (ShowTestWindow)
@@ -348,6 +349,25 @@ public class UIManager
             ImGui.ProgressBar(progress, new Vector2(-1, 0), etaStr);
         }
         ImGui.End();
+    }
+    
+    private void DrawGamePlayerNames()
+    {
+        if (!CEDClient.Running || CEDClient.GamePlayers.Count == 0)
+            return;
+        var drawList = ImGui.GetBackgroundDrawList();
+        var viewportPos = ImGui.GetMainViewport().Pos;
+        foreach (var player in CEDClient.GamePlayers.Values)
+        {
+            var screen = CEDGame.MapManager.GamePlayerScreenPosition(player);
+            if (screen == null)
+                continue;
+            var label = player.Name;
+            var size = ImGui.CalcTextSize(label);
+            var pos = viewportPos + new Vector2(screen.Value.X - size.X / 2, screen.Value.Y - size.Y - 4);
+            drawList.AddRectFilled(pos - new Vector2(3, 1), pos + size + new Vector2(3, 1), 0xA0000000, 3f);
+            drawList.AddText(pos, 0xFF00D7FF, label);
+        }
     }
 
     private void DrawContextMenu()
