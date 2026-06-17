@@ -251,9 +251,8 @@ public class NetState<T> : IDisposable, ILogging where T : ILogging
 
     public void LogDebug(string message)
     {
-#if DEBUG
-        Parent.LogDebug(Format(message));
-#endif
+        if (CentrED.Utility.Logger.DebugEnabled)
+            Parent.LogDebug(Format(message));
     }
 
     private string Format(string message)

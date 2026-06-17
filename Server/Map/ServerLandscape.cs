@@ -30,7 +30,7 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
         {
             throw new Exception($"{mapFile.Name} file is read-only");
         }
-        _map = mapFile.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        _map = mapFile.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
         _mapReader = new BinaryReader(_map, Encoding.UTF8);
         _mapWriter = new BinaryWriter(_map, Encoding.UTF8);
         IsUop = mapFile.Extension == ".uop";
@@ -57,7 +57,7 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
             throw new Exception($"{staidxFile.Name} file not found");
         if(staidxFile.IsReadOnly)
             throw new Exception($"{staidxFile.Name} file is read-only");
-        _staidx = staidxFile.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        _staidx = staidxFile.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
         _logger.LogInfo($"Loaded {staidxFile.Name}");
         _staidxReader = new BinaryReader(_staidx, Encoding.UTF8);
         _staidxWriter = new BinaryWriter(_staidx, Encoding.UTF8);
@@ -66,7 +66,7 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
             throw new Exception($"{staticsFile.Name} file not found");
         if(staticsFile.IsReadOnly)
             throw new Exception($"{staticsFile.Name} file is read-only");
-        _statics = staticsFile.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        _statics = staticsFile.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
         _logger.LogInfo($"Loaded {staticsFile.Name}");
         _staticsReader = new BinaryReader(_statics, Encoding.UTF8);
         _staticsWriter = new BinaryWriter(_statics, Encoding.UTF8);
@@ -279,6 +279,139 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
         using var backupStream = new FileStream(backupPath, FileMode.CreateNew, FileAccess.Write);
         file.Position = 0;
         file.CopyTo(backupStream);
+    }
+
+    public byte[] ReadRawLandBlock(ushort blockX, ushort blockY)
+    {
+        if (BlockCache.Get(Block.Id(blockX, blockY)) is { } block && block.LandBlock.Changed)
+            SaveBlock(block.LandBlock);
+        var result = new byte[192];
+        _map.Position = GetMapOffset(blockX, blockY) + 4;
+        _map.ReadExactly(result);
+        return result;
+    }
+
+    public byte[] ReadRawStaticsBlock(ushort blockX, ushort blockY)
+    {
+        if (BlockCache.Get(Block.Id(blockX, blockY)) is { } block && block.StaticBlock.Changed)
+            SaveBlock(block.StaticBlock);
+        _staidx.Position = GetStaidxOffset(blockX, blockY);
+        var index = new GenericIndex(_staidxReader);
+        if (index.Lookup < 0 || index.Length <= 0)
+            return Array.Empty<byte>();
+        var result = new byte[index.Length];
+        _statics.Position = index.Lookup;
+        _statics.ReadExactly(result);
+        return result;
+    }
+
+    public void SetLandZ(CEDServer server, ushort x, ushort y, sbyte newZ)
+    {
+        var tile = GetLandTile(x, y);
+        InternalSetLandZ(tile, newZ);
+        OnLandElevated(tile, newZ);
+        var packet = new DrawMapPacket(tile);
+        foreach (var ns in server.GetBlockSubscriptions((ushort)(x / 8), (ushort)(y / 8)))
+        {
+            ns.Send(packet);
+        }
+    }
+
+    public StaticTile? FindStatic(ushort x, ushort y, ushort id, sbyte targetedZ)
+    {
+        var candidates = GetStaticTiles(x, y).Where(t => t.Id == id).ToList();
+        return candidates.FirstOrDefault(t => t.Z == targetedZ)
+               ?? candidates.FirstOrDefault(t => id < TileDataProvider.StaticTiles.Length
+                                                 && t.Z + TileDataProvider.StaticTiles[id].Height == targetedZ)
+               ?? (candidates.Count == 1 ? candidates[0] : null);
+    }
+
+    public void SetStaticZ(CEDServer server, StaticTile tile, sbyte newZ)
+    {
+        var block = GetStaticBlock((ushort)(tile.X / 8), (ushort)(tile.Y / 8));
+        var packet = new ElevateStaticPacket(tile, newZ);
+        InternalSetStaticZ(tile, newZ);
+        OnStaticTileElevated(tile, newZ);
+        block.SortTiles(ref TileDataProvider.StaticTiles);
+        foreach (var ns in server.GetBlockSubscriptions(block.X, block.Y))
+        {
+            ns.Send(packet);
+        }
+    }
+
+    public (int edited, int denied) AreaSetZ(CEDServer server, ushort x1, ushort y1, ushort x2, ushort y2, int amount, bool absolute, Func<ushort, ushort, bool>? allowed = null)
+    {
+        int edited = 0;
+        int denied = 0;
+        var affectedBlocks = new HashSet<StaticBlock>();
+        for (ushort x = x1; x <= x2; x++)
+        {
+            for (ushort y = y1; y <= y2; y++)
+            {
+                if (allowed != null && !allowed(x, y))
+                {
+                    denied++;
+                    continue;
+                }
+                var tile = GetLandTile(x, y);
+                var newZ = (sbyte)Math.Clamp(absolute ? amount : tile.Z + amount, sbyte.MinValue, sbyte.MaxValue);
+                int delta = newZ - tile.Z;
+                if (delta != 0)
+                {
+                    edited++;
+                    InternalSetLandZ(tile, newZ);
+                    OnLandElevated(tile, newZ);
+                    var landPacket = new DrawMapPacket(tile);
+                    foreach (var ns in server.GetBlockSubscriptions((ushort)(x / 8), (ushort)(y / 8)))
+                    {
+                        ns.Send(landPacket);
+                    }
+                }
+
+                if (delta == 0)
+                    continue;
+                var staticBlock = GetStaticBlock((ushort)(x / 8), (ushort)(y / 8));
+                foreach (var staticTile in staticBlock.GetTiles(x, y).ToArray())
+                {
+                    var staticZ = (sbyte)Math.Clamp(staticTile.Z + delta, sbyte.MinValue, sbyte.MaxValue);
+                    var staticPacket = new ElevateStaticPacket(staticTile, staticZ);
+                    InternalSetStaticZ(staticTile, staticZ);
+                    OnStaticTileElevated(staticTile, staticZ);
+                    affectedBlocks.Add(staticBlock);
+                    foreach (var ns in server.GetBlockSubscriptions(staticBlock.X, staticBlock.Y))
+                    {
+                        ns.Send(staticPacket);
+                    }
+                }
+            }
+        }
+        foreach (var block in affectedBlocks)
+        {
+            block.SortTiles(ref TileDataProvider.StaticTiles);
+        }
+        return (edited, denied);
+    }
+
+    public (string source, string destName)[] PrepareExport(int mapIndex)
+    {
+        Flush();
+        return new[]
+        {
+            (_map.Name, $"map{mapIndex}.mul"),
+            (_staidx.Name, $"staidx{mapIndex}.mul"),
+            (_statics.Name, $"statics{mapIndex}.mul"),
+        };
+    }
+
+    public static void ExportCopy(string directory, (string source, string destName)[] files)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (var (source, destName) in files)
+        {
+            using var src = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var dst = new FileStream(Path.Combine(directory, destName), FileMode.Create, FileAccess.Write);
+            src.CopyTo(dst);
+        }
     }
 
     public void SaveBlock(LandBlock landBlock)

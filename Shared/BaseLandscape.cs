@@ -208,6 +208,7 @@ public abstract class BaseLandscape : ILogging
     public event MapChanged? MapChanged;
     public event BlockChanged? BlockUnloaded;
     public event BlockChanged? BlockLoaded;
+    public event BlockChanged? BlockUpdated;
     public event LandReplaced? LandTileReplaced;
     public event LandElevated? LandTileElevated;
     public event StaticChanged? StaticTileAdded;
@@ -231,6 +232,12 @@ public abstract class BaseLandscape : ILogging
     public void OnBlockLoaded(Block block)
     {
         BlockLoaded?.Invoke(block);
+        OnMapChanged();
+    }
+
+    public void OnBlockUpdated(Block block)
+    {
+        BlockUpdated?.Invoke(block);
         OnMapChanged();
     }
 

@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using CentrED.Network;
+using CentrED.Server.Bridge;
 using CentrED.Server.Config;
 using CentrED.Server.Map;
 using CentrED.Utility;
@@ -18,6 +19,7 @@ public class CEDServer : ILogging, IDisposable
     private Socket Listener { get; } = null!;
     public ConfigRoot Config { get; }
     public ServerLandscape Landscape { get; }
+    public UOBridgeServer? UOBridge { get; }
     public HashSet<NetState<CEDServer>> Clients { get; } = new(8);
     private readonly Dictionary<long, HashSet<NetState<CEDServer>>> _blockSubscriptions = new();
 
@@ -49,6 +51,10 @@ public class CEDServer : ILogging, IDisposable
         Console.CancelKeyPress += ConsoleOnCancelKeyPress;
         Landscape = new ServerLandscape(config, _logger);
         Listener = Bind(new IPEndPoint(IPAddress.Any, Config.Port));
+        if (Config.UOBridge.Enabled)
+        {
+            UOBridge = new UOBridgeServer(this);
+        }
         LogInfo("Initialization done");
     }
 
@@ -176,6 +182,7 @@ public class CEDServer : ILogging, IDisposable
             {
                 ProcessConnectedQueue();
                 ProcessNetStates();
+                UOBridge?.Update();
 
                 AutoSave();
                 AutoBackup();
@@ -386,6 +393,7 @@ public class CEDServer : ILogging, IDisposable
 
     public void Dispose()
     {
+        UOBridge?.Dispose();
         Listener.Dispose();
         Landscape.Dispose();
     }

@@ -29,7 +29,6 @@ public class ClientHandling
 
     private static void OnUpdateClientPosPacket(SpanReader reader, NetState<CEDServer> ns)
     {
-        ns.LogDebug("Server OnUpdateClientPosPacket");
         var x = reader.ReadUInt16();
         var y = reader.ReadUInt16();
         ns.Parent.GetAccount(ns.Username)!.LastPos = new LastPos(x, y);

@@ -49,6 +49,9 @@ public sealed class CentrEDClient : ILogging
     internal Queue<PointU16> RequestedBlocksQueue = new();
     internal HashSet<PointU16> RequestedBlocks = [];
     public List<String> Clients { get; } = new();
+    public Dictionary<uint, GamePlayer> GamePlayers { get; } = new();
+    public event Action? GamePlayersChanged;
+    internal void OnGamePlayersChanged() => GamePlayersChanged?.Invoke();
     public bool Running => State == ClientState.Running;
     public string Status { get; internal set; } = "";
     internal TileDataLand[]? LandTileData;
@@ -71,6 +74,8 @@ public sealed class CentrEDClient : ILogging
         RequestedBlocksQueue.Clear();
         RequestedBlocks.Clear();
         Clients.Clear();
+        GamePlayers.Clear();
+        OnGamePlayersChanged();
         State = ClientState.Disconnected;
         ServerState = ServerState.Running;
         Status = "";
@@ -84,6 +89,7 @@ public sealed class CentrEDClient : ILogging
         ns.RegisterPacketHandler(0x03, 0, AdminHandling.OnAdminHandlerPacket);
         ns.RegisterPacketHandler(0x0C, 0, ClientHandling.OnClientHandlerPacket);
         ns.RegisterPacketHandler(0x0D, 0, RadarMap.OnRadarHandlerPacket);
+        ns.RegisterPacketHandler(0x0F, 0, GamePlayerHandling.OnGamePlayerPacket);
     }
 
     public void Connect(string hostname, int port, string username, string password)

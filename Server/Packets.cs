@@ -335,3 +335,23 @@ public class RegionListPacket : Packet
         }
     }
 }
+
+class GamePlayerPacket : Packet
+{
+    public GamePlayerPacket(uint serial, string name, ushort x, ushort y, sbyte z, bool mounted) : base(0x0F, 0)
+    {
+        Writer.Write((byte)1);
+        Writer.Write(serial);
+        Writer.WriteStringNull(name);
+        Writer.Write(x);
+        Writer.Write(y);
+        Writer.Write(z);
+        Writer.Write((byte)(mounted ? 1 : 0));
+    }
+
+    public GamePlayerPacket(uint serial) : base(0x0F, 0)
+    {
+        Writer.Write((byte)2);
+        Writer.Write(serial);
+    }
+}
