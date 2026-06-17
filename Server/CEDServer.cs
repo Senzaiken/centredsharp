@@ -17,9 +17,10 @@ public class CEDServer : ILogging, IDisposable
     private ProtocolVersion ProtocolVersion;
     private Socket Listener { get; } = null!;
     public ConfigRoot Config { get; }
-    public ServerLandscape Landscape { get; }
+    public List<ServerLandscape> Landscapes { get; } = new();
+    public ServerLandscape Landscape => Landscapes[0];
     public HashSet<NetState<CEDServer>> Clients { get; } = new(8);
-    private readonly Dictionary<long, HashSet<NetState<CEDServer>>> _blockSubscriptions = new();
+    private readonly Dictionary<NetState<CEDServer>, ServerLandscape> _clientLandscape = new();
 
     private readonly ConcurrentQueue<NetState<CEDServer>> _connectedQueue = new();
     private readonly Queue<NetState<CEDServer>> _toDispose = new();
@@ -47,8 +48,23 @@ public class CEDServer : ILogging, IDisposable
         ProtocolVersion = Config.CentrEdPlus ? ProtocolVersion.CentrEDPlus : ProtocolVersion.CentrED;
         LogInfo("Running as " + (Config.CentrEdPlus ? "CentrED+ 0.7.9" : "CentrED 0.6.3"));
         Console.CancelKeyPress += ConsoleOnCancelKeyPress;
-        Landscape = new ServerLandscape(config, _logger);
-        Listener = Bind(new IPEndPoint(IPAddress.Any, Config.Port));
+        var facets = config.EffectiveFacets;
+        for (var i = 0; i < facets.Count; i++)
+        {
+            var name = string.IsNullOrEmpty(facets[i].Name) ? facets[i].MapPath : facets[i].Name;
+            LogInfo($"Loading facet {i}: {name}");
+            try
+            {
+                Landscapes.Add(new ServerLandscape(config, facets[i], i, _logger));
+            }
+            catch (Exception e)
+            {
+                LogError($"Failed to load facet {i} ({name}): {e.Message}. Skipping it.");
+            }
+        }
+        if (Landscapes.Count == 0)
+            throw new InvalidOperationException("No facets could be loaded.");
+        Listener = Bind(new IPEndPoint(Config.BindAddress, Config.Port));
         LogInfo("Initialization done");
     }
 
@@ -70,6 +86,23 @@ public class CEDServer : ILogging, IDisposable
     public Region? GetRegion(string name)
     {
         return Config.Regions.Find(a => a.Name == name);
+    }
+
+    public ServerLandscape GetLandscape(NetState<CEDServer> ns) =>
+        _clientLandscape.TryGetValue(ns, out var landscape) ? landscape : Landscapes[0];
+
+    public int GetFacetIndex(NetState<CEDServer> ns) => GetLandscape(ns).FacetIndex;
+
+    public bool IsFacetSelected(NetState<CEDServer> ns) => _clientLandscape.ContainsKey(ns);
+
+    public bool BindFacet(NetState<CEDServer> ns, int index)
+    {
+        var landscape = Landscapes.Find(l => l.FacetIndex == index);
+        if (landscape == null)
+            return false;
+        _clientLandscape[ns] = landscape;
+        landscape.RegisterPacketHandlers(ns);
+        return true;
     }
 
     private Socket Bind(IPEndPoint endPoint)
@@ -144,7 +177,6 @@ public class CEDServer : ILogging, IDisposable
                     ProtocolVersion = ProtocolVersion
                 };
                 RegisterPacketHandlers(ns);
-                Landscape.RegisterPacketHandlers(ns);
                 _connectedQueue.Enqueue(ns);
             }
         }
@@ -224,6 +256,7 @@ public class CEDServer : ILogging, IDisposable
         while (_toDispose.TryDequeue(out var ns))
         {
             Clients.Remove(ns);
+            _clientLandscape.Remove(ns);
             if (ns.Username != "")
             {
                 Broadcast(new ClientDisconnectedPacket(ns));
@@ -246,7 +279,8 @@ public class CEDServer : ILogging, IDisposable
 
     public void Save()
     {
-        Landscape.Flush();
+        foreach (var landscape in Landscapes)
+            landscape.Flush();
         Config.Flush();
         _lastFlush = DateTime.Now;
     }
@@ -281,24 +315,10 @@ public class CEDServer : ILogging, IDisposable
         }
     }
     
-    public HashSet<NetState<CEDServer>> GetBlockSubscriptions(ushort x, ushort y)
-    {
-        Landscape.AssertBlockCoords(x, y);
-        var key = Landscape.GetBlockNumber(x, y);
-
-        if (!_blockSubscriptions.TryGetValue(key, out var subscriptions))
-        {
-            subscriptions = [];
-            _blockSubscriptions.Add(key, subscriptions);
-        }
-
-        subscriptions.RemoveWhere(ns => !ns.Running);
-        return subscriptions;
-    }
-
     private void Backup()
     {
-        Landscape.Flush();
+        foreach (var landscape in Landscapes)
+            landscape.Flush();
         var logMsg = "Automatic backup in progress";
         LogInfo(logMsg);
         Broadcast(new ServerStatePacket(ServerState.Other, logMsg));
@@ -314,7 +334,8 @@ public class CEDServer : ILogging, IDisposable
         }
         backupDir = $"{Config.AutoBackup.Directory}/Backup1";
 
-        Landscape.Backup(backupDir);
+        foreach (var landscape in Landscapes)
+            landscape.Backup(backupDir);
 
         Broadcast(new ServerStatePacket(ServerState.Running));
         LogInfo("Automatic backup finished.");
@@ -351,17 +372,20 @@ public class CEDServer : ILogging, IDisposable
                 {
                     case ["save"]:
                         Console.Write("Saving...");
-                        Landscape.Flush();
+                        foreach (var landscape in Landscapes)
+                            landscape.Flush();
                         Console.WriteLine("Done");
                         break;
                     case ["save", string dir]:
                         Console.Write($"Saving to {dir}...");
-                        Landscape.Backup(dir);
+                        foreach (var landscape in Landscapes)
+                            landscape.Backup(dir);
                         Console.WriteLine("Done");
                         break;
                     case ["supersave"]:
                         Console.Write("Supersaving...");
-                        Landscape.SuperSave();
+                        foreach (var landscape in Landscapes)
+                            landscape.SuperSave();
                         Console.WriteLine("Done");
                         break;
                     default: PrintHelp(); break;
@@ -387,7 +411,8 @@ public class CEDServer : ILogging, IDisposable
     public void Dispose()
     {
         Listener.Dispose();
-        Landscape.Dispose();
+        foreach (var landscape in Landscapes)
+            landscape.Dispose();
     }
     
     public void LogInfo(string message)

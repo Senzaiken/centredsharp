@@ -9,21 +9,43 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
 {
     private readonly Logger _logger;
 
+    public string Name { get; }
+    public int FacetIndex { get; }
+
+    private readonly Dictionary<long, HashSet<NetState<CEDServer>>> _blockSubscriptions = new();
+
+    public HashSet<NetState<CEDServer>> GetBlockSubscriptions(ushort x, ushort y)
+    {
+        AssertBlockCoords(x, y);
+        var key = GetBlockNumber(x, y);
+        if (!_blockSubscriptions.TryGetValue(key, out var subscriptions))
+        {
+            subscriptions = [];
+            _blockSubscriptions.Add(key, subscriptions);
+        }
+        subscriptions.RemoveWhere(ns => !ns.Running);
+        return subscriptions;
+    }
+
     public ServerLandscape
     (
         ConfigRoot config,
+        Config.Map facet,
+        int facetIndex,
         Logger logger
-    ) : base(config.Map.Width, config.Map.Height)
+    ) : base(facet.Width, facet.Height)
     {
         _logger = logger;
-        var mapFile = new FileInfo(config.Map.MapPath);
+        FacetIndex = facetIndex;
+        Name = string.IsNullOrEmpty(facet.Name) ? $"Facet {facetIndex}" : facet.Name;
+        var mapFile = new FileInfo(facet.MapPath);
         if (!mapFile.Exists)
         {
             Console.WriteLine("Map file not found, do you want to create it? [y/n]");
             if (Console.ReadLine() == "y")
             {
                 InitMap(mapFile);
-                mapFile = new FileInfo(config.Map.MapPath);
+                mapFile = new FileInfo(facet.MapPath);
             }
         }
         if (mapFile.IsReadOnly)
@@ -41,16 +63,16 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
         }
         _logger.LogInfo($"Loaded {_map.Name}");
 
-        var staidxFile = new FileInfo(config.Map.StaIdx);
-        var staticsFile = new FileInfo(config.Map.Statics);
+        var staidxFile = new FileInfo(facet.StaIdx);
+        var staticsFile = new FileInfo(facet.Statics);
         if (!staidxFile.Exists && !staticsFile.Exists)
         {
             Console.WriteLine("Statics files not found, do you want to create them? [y/n]");
             if (Console.ReadLine() == "y")
             {
                 InitStatics(staticsFile, staidxFile);
-                staidxFile = new FileInfo(config.Map.StaIdx);
-                staticsFile = new FileInfo(config.Map.Statics);
+                staidxFile = new FileInfo(facet.StaIdx);
+                staticsFile = new FileInfo(facet.Statics);
             }
         }
         if(!staidxFile.Exists)
@@ -96,7 +118,7 @@ public sealed partial class ServerLandscape : BaseLandscape, IDisposable, ILoggi
         BlockUnloaded += OnRemovedCachedObject;
         
         //Cache entire strip of chunks to reduce IO in case someone is doing naive iteration over entire map
-        BlockCache.Resize(Math.Max(config.Map.Width, config.Map.Height) + 1);
+        BlockCache.Resize(Math.Max(facet.Width, facet.Height) + 1);
     }
 
     private void InitMap(FileInfo map)

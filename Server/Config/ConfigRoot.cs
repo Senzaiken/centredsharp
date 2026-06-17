@@ -1,4 +1,5 @@
-﻿using System.Xml;
+﻿using System.Net;
+using System.Xml;
 
 namespace CentrED.Server.Config;
 
@@ -12,6 +13,8 @@ public class ConfigRoot
     public bool CentrEdPlus { get; set; }
     public int Port { get; set; } = 2597;
     public Map Map { get; set; } = new();
+    public List<Map> Facets { get; set; } = new();
+    public IReadOnlyList<Map> EffectiveFacets => Facets.Count > 0 ? Facets : new[] { Map };
     public string Tiledata { get; set; } = "tiledata.mul";
     public string Radarcol { get; set; } = "radarcol.mul";
     public string Hues { get; set; } = "hues.mul";
@@ -21,6 +24,8 @@ public class ConfigRoot
     
     public bool Changed { get; set; }
     public string FilePath { get; set; } = DefaultPath;
+
+    public IPAddress BindAddress { get; set; } = IPAddress.Any;
 
     public void Invalidate()
     {
@@ -194,7 +199,14 @@ public class ConfigRoot
             
         writer.WriteElementString("CentrEdPlus", XmlConvert.ToString(CentrEdPlus));
         writer.WriteElementString("Port", XmlConvert.ToString(Port));
-        Map.Write(writer);
+        EffectiveFacets[0].Write(writer);
+        if (Facets.Count > 0)
+        {
+            writer.WriteStartElement("Facets");
+            foreach (var facet in Facets)
+                facet.Write(writer, "Facet");
+            writer.WriteEndElement();
+        }
         writer.WriteElementString("Tiledata", Tiledata);
         writer.WriteElementString("Radarcol", Radarcol);
         writer.WriteElementString("Hues", Hues);
@@ -240,6 +252,18 @@ public class ConfigRoot
 
                     case "Map":
                         result.Map = Map.Read(reader);
+                        break;
+
+                    case "Facets":
+                        using (var facetsReader = reader.ReadSubtree())
+                        {
+                            facetsReader.Read();
+                            while (facetsReader.Read())
+                            {
+                                if (facetsReader.NodeType == XmlNodeType.Element && facetsReader.Name == "Facet")
+                                    result.Facets.Add(Map.Read(facetsReader));
+                            }
+                        }
                         break;
 
                     case "Tiledata":

@@ -280,6 +280,7 @@ public class UIManager
     }
 
     private bool _resetLayout;
+    private uint _dockSpaceId;
 
     protected virtual void DrawUI()
     {
@@ -293,9 +294,11 @@ public class UIManager
         {
             ImGui.LoadIniSettingsFromDisk("imgui.ini.default");
             Config.Instance.Layout = new Dictionary<string, WindowState>();
+            ResetWorldDocking();
             _resetLayout = false;
         }
-        ImGui.DockSpaceOverViewport(ImGuiDockNodeFlags.PassthruCentralNode | ImGuiDockNodeFlags.NoDockingOverCentralNode);
+        _dockSpaceId = ImGui.DockSpaceOverViewport(ImGuiDockNodeFlags.None);
+        DrawWorldArea();
         DrawContextMenu();
         DrawMainMenu();
         DrawStatusBar();
@@ -428,9 +431,182 @@ public class UIManager
                 DebugWindow.DrawMenuItem();
                 ImGui.EndMenu();
             }
+            DrawWorldsMenu();
             CEDGame.UIManager.AddCurrentWindowRect();
             ImGui.EndMainMenuBar();
         }
+    }
+
+    private readonly Dictionary<World, (Texture2D Tex, ImTextureID Id)> _worldBindings = new();
+    private readonly HashSet<World> _redockRequested = new();
+    private uint _worldsDockId;
+
+    private static string WorldWindowId(World world) => world.FacetIndex >= 0 ? $"facet_{world.FacetIndex}" : "world";
+
+    public void ResetWorldDocking()
+    {
+        if (CEDGame?.Worlds == null)
+            return;
+        foreach (var world in CEDGame.Worlds.Worlds)
+            _redockRequested.Add(world);
+    }
+
+    private unsafe void DrawWorldArea()
+    {
+        var worlds = CEDGame.Worlds;
+        if (worlds == null)
+            return;
+
+        foreach (var (world, binding) in _worldBindings.Where(kv => !worlds.Worlds.Contains(kv.Key)).ToList())
+        {
+            _uiRenderer.UnbindTexture(binding.Id);
+            _worldBindings.Remove(world);
+        }
+        _redockRequested.RemoveWhere(w => !worlds.Worlds.Contains(w));
+
+        Vector2 hostPos, hostSize;
+        var central = _dockSpaceId != 0 ? ImGuiP.DockBuilderGetCentralNode(_dockSpaceId) : default;
+        if (!central.IsNull)
+        {
+            hostPos = central.Pos;
+            hostSize = central.Size;
+        }
+        else
+        {
+            var vp = ImGui.GetMainViewport();
+            hostPos = vp.WorkPos;
+            hostSize = vp.WorkSize;
+        }
+        ImGui.SetNextWindowPos(hostPos);
+        ImGui.SetNextWindowSize(hostSize);
+        var hostFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize |
+                        ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.NoScrollbar |
+                        ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoBringToFrontOnFocus |
+                        ImGuiWindowFlags.NoNavFocus;
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(0, 0));
+        if (ImGui.Begin("###WorldHost", hostFlags))
+        {
+            _worldsDockId = ImGui.GetID("WorldsDockSpace");
+            const ImGuiDockNodeFlags worldsDockFlags = ImGuiDockNodeFlags.AutoHideTabBar | (ImGuiDockNodeFlags)(1 << 15);
+            ImGui.DockSpace(_worldsDockId, new Vector2(0, 0), worldsDockFlags);
+        }
+        ImGui.End();
+        ImGui.PopStyleVar();
+
+        World? hoveredWorld = null;
+        World? focusedWorld = null;
+        for (var i = 0; i < worlds.Worlds.Count; i++)
+        {
+            var world = worlds.Worlds[i];
+            var map = world.Map;
+            if (world == worlds.FocusRequest)
+            {
+                ImGui.SetNextWindowFocus();
+                worlds.FocusRequest = null;
+            }
+            var flags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+            var title = $"{world.Name}###{WorldWindowId(world)}";
+            var dockCond = _redockRequested.Remove(world) ? ImGuiCond.Always : ImGuiCond.FirstUseEver;
+            ImGui.SetNextWindowDockID(_worldsDockId, dockCond);
+            var open = true;
+            var begun = ImGui.Begin(title, ref open, flags);
+            map.WindowVisible = begun;
+            if (begun)
+            {
+                var avail = ImGui.GetContentRegionAvail();
+                map.Resize((int)avail.X, (int)avail.Y);
+
+                var contentPos = ImGui.GetCursorScreenPos();
+                var output = map.Output;
+                if (output != null)
+                {
+                    if (_worldBindings.TryGetValue(world, out var prev) && prev.Tex != output)
+                        _uiRenderer.UnbindTexture(prev.Id);
+                    var id = _uiRenderer.BindTexture(output);
+                    _worldBindings[world] = (output, id);
+                    ImGui.Image(new ImTextureRef(null, id), new Vector2(Math.Max(1, avail.X), Math.Max(1, avail.Y)));
+                    map.ViewHovered = ImGui.IsItemHovered();
+                }
+                else
+                {
+                    map.ViewHovered = false;
+                }
+
+                var mouse = ImGui.GetMousePos();
+                map.ViewMouseX = (int)(mouse.X - contentPos.X);
+                map.ViewMouseY = (int)(mouse.Y - contentPos.Y);
+                if (map.ViewHovered &&
+                    (ImGui.IsMouseClicked(ImGuiMouseButton.Left) || ImGui.IsMouseClicked(ImGuiMouseButton.Right)))
+                    ImGui.SetWindowFocus();
+                map.ViewFocused = ImGui.IsWindowFocused();
+                if (map.ViewHovered)
+                    hoveredWorld = world;
+                if (map.ViewFocused)
+                {
+                    focusedWorld = world;
+                    worlds.SetFocused(world);
+                }
+            }
+            else
+            {
+                map.ViewHovered = false;
+                map.ViewFocused = false;
+            }
+            ImGui.End();
+            if (!open)
+                _redockRequested.Add(world);
+        }
+        if (hoveredWorld != null)
+            worlds.SetActive(hoveredWorld);
+        else if (focusedWorld != null)
+            worlds.SetActive(focusedWorld);
+    }
+
+    private void DrawWorldsMenu()
+    {
+        var controller = CEDGame.FacetController;
+        if (controller == null)
+            return;
+
+        if (controller.InRemoteMode)
+        {
+            if (!ImGui.BeginMenu("Worlds"))
+                return;
+            var activeRemote = CEDGame.Worlds.Active?.FacetIndex ?? -1;
+            foreach (var facet in controller.RemoteFacets)
+            {
+                var name = string.IsNullOrEmpty(facet.Name) ? $"Facet {facet.Index}" : facet.Name;
+                if (ImGui.MenuItem(name, "", facet.Index == activeRemote))
+                    controller.FocusFacet(facet.Index);
+            }
+            ImGui.EndMenu();
+            return;
+        }
+
+        if (controller.Facets.Count == 0)
+            return;
+        if (!ImGui.BeginMenu("Worlds"))
+            return;
+
+        var activeFacet = CEDGame.Worlds.Active?.FacetIndex ?? -1;
+        foreach (var facet in controller.Facets)
+        {
+            var isOpen = controller.IsOpen(facet.Index);
+            var label = facet.DimensionsKnown ? facet.Name : facet.Name + " (set size)";
+            if (ImGui.MenuItem(label, "", facet.Index == activeFacet))
+            {
+                if (!facet.DimensionsKnown || !facet.HasStatics)
+                {
+                    if (AllWindows.TryGetValue(typeof(OptionsWindow), out var options))
+                        options.Show = true;
+                }
+                else
+                {
+                    controller.OpenWorld(facet);
+                }
+            }
+        }
+        ImGui.EndMenu();
     }
 
     private void DrawStatusBar()

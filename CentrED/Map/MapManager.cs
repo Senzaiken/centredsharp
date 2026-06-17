@@ -45,25 +45,39 @@ public class MapManager
     public bool DebugDrawSelectionBuffer;
     private RenderTarget2D _lightMap;
     public bool DebugDrawLightMap;
+    private RenderTarget2D _worldRenderTarget;
+    public RenderTarget2D Output => _worldRenderTarget;
+    public int ViewMouseX, ViewMouseY;
+    public bool ViewHovered, ViewFocused;
+    public bool WindowVisible;
+    private int _prevMouseX, _prevMouseY;
     
     public MapEffect MapEffect { get; private set; }
 
-    public UOFileManager UoFileManager { get; private set; }
-    private AnimatedStaticsManager _animatedStaticsManager;
-    public Art Arts;
-    public Texmap Texmaps;
-    public BlueprintManager BlueprintManager;
+    private static UOFileManager _assets;
+    private static AnimatedStaticsManager _animatedStaticsManager;
+    private static Art _sharedArts;
+    private static Texmap _sharedTexmaps;
+    private static BlueprintManager _sharedBlueprints;
+    private static string _loadedClientPath = "";
+    private static TileDataLand[] _sharedLandTileData = [];
+    private static TileDataStatic[] _sharedStaticTileData = [];
+    public UOFileManager UoFileManager => _assets;
+    public Art Arts => _sharedArts;
+    public Texmap Texmaps => _sharedTexmaps;
+    public BlueprintManager BlueprintManager => _sharedBlueprints;
 
-    internal List<Tool> Tools = [];
-    private Tool _activeTool;
+    private static readonly List<Tool> _sharedTools = [];
+    internal List<Tool> Tools => _sharedTools;
+    private static Tool _activeTool;
 
     public Tool ActiveTool
     {
         get => _activeTool;
         set
         {
-            _activeTool.OnMouseLeave(Selected);
-            _activeTool.OnDeactivated(Selected);
+            _activeTool?.OnMouseLeave(Selected);
+            _activeTool?.OnDeactivated(Selected);
             _activeTool = value;
             _activeTool.OnActivated(Selected);
             _activeTool.OnMouseEnter(Selected);
@@ -107,15 +121,18 @@ public class MapManager
     public bool ObjectHueFilterInclusive = true;
     public HashSet<LandObject> _ToRecalculate = new();
 
-    public List<ushort> ValidLandIds { get; } = [];
-    public List<ushort> ValidStaticIds { get; } = [];
+    private static readonly List<ushort> _sharedValidLandIds = [];
+    private static readonly List<ushort> _sharedValidStaticIds = [];
+    public List<ushort> ValidLandIds => _sharedValidLandIds;
+    public List<ushort> ValidStaticIds => _sharedValidStaticIds;
 
-    public MapManager(GraphicsDevice gd, GameWindow window, Keymap keymap)
+    public MapManager(GraphicsDevice gd, GameWindow window, Keymap keymap, CentrEDClient client)
     {
         _gfxDevice = gd;
         _gameWindow = window;
         _keymap = keymap;
-        
+        StaticsManager.MapManager = this;
+
         MapEffect = new MapEffect(gd);
         _mapRenderer = new MapRenderer(gd, window);
         _spriteBatch = new SpriteBatch(gd);
@@ -128,7 +145,7 @@ public class MapManager
             _background = Texture2D.FromStream(gd, fileStream);
         }
         
-        Client = CEDClient;
+        Client = client;
         Client.Connected += OnConnected;
         Client.Disconnected += OnDisconnected;
         EnableBlockLoading();
@@ -148,20 +165,22 @@ public class MapManager
         Client.LoggedError += Console.WriteLine;
         #endif
         
-        Tools.Add(new SelectTool()); //Select tool have to be first!
-        Tools.Add(new DrawTool());
-        Tools.Add(new MoveTool());
-        Tools.Add(new ElevateTool());
-        Tools.Add(new DeleteTool());
-        Tools.Add(new HueTool());
-        Tools.Add(new LandBrushTool());
-        Tools.Add(new MeshEditTool());
-        Tools.Add(new AltitudeGradientTool());
-        Tools.Add(new CoastlineTool());
-        
-        Tools.ForEach(t => t.PostConstruct(this));
+        if (_sharedTools.Count == 0)
+        {
+            Tools.Add(new SelectTool()); //Select tool have to be first!
+            Tools.Add(new DrawTool());
+            Tools.Add(new MoveTool());
+            Tools.Add(new ElevateTool());
+            Tools.Add(new DeleteTool());
+            Tools.Add(new HueTool());
+            Tools.Add(new LandBrushTool());
+            Tools.Add(new MeshEditTool());
+            Tools.Add(new AltitudeGradientTool());
+            Tools.Add(new CoastlineTool());
 
-        _activeTool = Tools[0];
+            Tools.ForEach(t => t.PostConstruct(this));
+            _activeTool = Tools[0];
+        }
         OnWindowsResized(window);
     }
     
@@ -282,7 +301,7 @@ public class MapManager
 
     private void AddTile(LandTile landTile)
     {
-        var lo = new LandObject(landTile);
+        var lo = new LandObject(landTile, this);
         LandTiles[landTile.X, landTile.Y] = lo;
         LandTilesIdDictionary.Add(lo.ObjectId, lo);
         LandTilesCount++;
@@ -296,6 +315,14 @@ public class MapManager
 
     public void Load(string clientPath)
     {
+        LoadSharedAssets(clientPath);
+        Client.InitTileData(_sharedLandTileData, _sharedStaticTileData);
+    }
+
+    private void LoadSharedAssets(string clientPath)
+    {
+        if (_loadedClientPath == clientPath)
+            return;
         var tiledataFile = Path.Combine(clientPath, "tiledata.mul");
         var clientVersion = new FileInfo(tiledataFile).Length switch
         {
@@ -303,53 +330,55 @@ public class MapManager
             >= 1644544 => ClientVersion.CV_7000,
             _ => ClientVersion.CV_6000
         };
-        UoFileManager = new UOFileManager(clientVersion, clientPath);
-        //We don't UoFileManager.Load() as we don't need all the assets
-        UoFileManager.Arts.Load();
-        UoFileManager.Hues.Load();
-        UoFileManager.TileData.Load();
-        UoFileManager.Texmaps.Load();
-        UoFileManager.AnimData.Load();
-        UoFileManager.Lights.Load();
-        UoFileManager.Multis.Load();
-        
+        _assets = new UOFileManager(clientVersion, clientPath);
+        //We don't _assets.Load() as we don't need all the assets
+        _assets.Arts.Load();
+        _assets.Hues.Load();
+        _assets.TileData.Load();
+        _assets.Texmaps.Load();
+        _assets.AnimData.Load();
+        _assets.Lights.Load();
+        _assets.Multis.Load();
+
         _animatedStaticsManager = new AnimatedStaticsManager();
         _animatedStaticsManager.Initialize();
-        Arts = new Art(UoFileManager.Arts, UoFileManager.Hues, _gfxDevice);
-        Texmaps = new Texmap(UoFileManager.Texmaps, _gfxDevice);
+        _sharedArts = new Art(_assets.Arts, _assets.Hues, _gfxDevice);
+        _sharedTexmaps = new Texmap(_assets.Texmaps, _gfxDevice);
         HuesManager.Load(_gfxDevice);
         LightsManager.Load(_gfxDevice);
+        NonWalkableHue = HuesManager.Instance.GetRGBVector(Color.FromArgb(50, 0, 0));
+        WalkableHue = HuesManager.Instance.GetRGBVector(Color.FromArgb(0, 50, 0));
 
-        var tdl = UoFileManager.TileData;
-        ValidLandIds.Clear();
+        var tdl = _assets.TileData;
+        _sharedValidLandIds.Clear();
         for (var i = 0; i < tdl.LandData.Length; i++)
         {
-            var isArtValid = CEDGame.MapManager.UoFileManager.Arts.File.GetValidRefEntry(i).Length > 0;
+            var isArtValid = _assets.Arts.File.GetValidRefEntry(i).Length > 0;
 
             var texId = tdl.LandData[i].TexID;
-            var isTexValid = CEDGame.MapManager.UoFileManager.Texmaps.File.GetValidRefEntry(texId).Length > 0;
+            var isTexValid = _assets.Texmaps.File.GetValidRefEntry(texId).Length > 0;
 
             // Only show tiles if art OR texture is valid
             if (isArtValid || isTexValid)
             {
-                ValidLandIds.Add((ushort)i);
+                _sharedValidLandIds.Add((ushort)i);
             }
         }
-        ValidStaticIds.Clear();
+        _sharedValidStaticIds.Clear();
         for (var i = 0; i < tdl.StaticData.Length; i++)
         {
-            if (!UoFileManager.Arts.File.GetValidRefEntry(i + ArtLoader.MAX_LAND_DATA_INDEX_COUNT).Equals
+            if (!_assets.Arts.File.GetValidRefEntry(i + ArtLoader.MAX_LAND_DATA_INDEX_COUNT).Equals
                     (UOFileIndex.Invalid))
             {
-                ValidStaticIds.Add((ushort)i);
+                _sharedValidStaticIds.Add((ushort)i);
             }
         }
-        var landTileData = tdl.LandData.Select(ltd => new TileDataLand((ulong)ltd.Flags, ltd.TexID, ltd.Name)).ToArray();
-        var staticTileData = tdl.StaticData.Select(std => new TileDataStatic((ulong)std.Flags, std.Weight, std.Layer, std.Count, std.AnimID, std.Hue, std.LightIndex, std.Height, std.Name)).ToArray(); 
-        Client.InitTileData(landTileData, staticTileData);
+        _sharedLandTileData = tdl.LandData.Select(ltd => new TileDataLand((ulong)ltd.Flags, ltd.TexID, ltd.Name)).ToArray();
+        _sharedStaticTileData = tdl.StaticData.Select(std => new TileDataStatic((ulong)std.Flags, std.Weight, std.Layer, std.Count, std.AnimID, std.Hue, std.LightIndex, std.Height, std.Name)).ToArray();
 
-        BlueprintManager = new BlueprintManager(UoFileManager.Multis);
-        BlueprintManager.Load();
+        _sharedBlueprints = new BlueprintManager(_assets.Multis);
+        _sharedBlueprints.Load();
+        _loadedClientPath = clientPath;
     }
 
     public Vector2 Position
@@ -391,6 +420,14 @@ public class MapManager
     public int LandTilesCount;
     public Dictionary<LandObject, LandObject> GhostLandTiles = new();
 
+    private LandObject? GetLandObject(int x, int y)
+    {
+        var tiles = LandTiles;
+        if ((uint)x >= (uint)tiles.GetLength(0) || (uint)y >= (uint)tiles.GetLength(1))
+            return null;
+        return tiles[x, y];
+    }
+
     public StaticsManager StaticsManager = new();
     public VirtualLayerObject VirtualLayer = VirtualLayerObject.Instance; //Used for drawing
     public ImageOverlay ImageOverlay = new(); //Used for image overlay feature
@@ -409,11 +446,7 @@ public class MapManager
 
     public LandTile? GetLandTile(int x, int y)
     {
-        if (!Client.IsValidX(x) || !Client.IsValidY(y))
-        {
-            return null;
-        }
-        var realLandTile = LandTiles[x, y];
+        var realLandTile = GetLandObject(x, y);
         if (realLandTile == null)
             return null;
         if (GhostLandTiles.TryGetValue(realLandTile, out var ghostLandTile))
@@ -507,12 +540,13 @@ public class MapManager
     {
         if (CEDGame.Closing)
             return;
-        if (CEDClient.ServerState != ServerState.Running)
+        if (Client.ServerState != ServerState.Running)
             return;
         
         Metrics.Start("UpdateMap");
         var mouseState = Mouse.GetState();
-        if (processMouse)
+        var isActiveWorld = ReferenceEquals(this, CEDGame.Worlds.Active?.Map);
+        if (isActiveWorld && processMouse)
         {
             if (Client.Running)
             {
@@ -544,7 +578,7 @@ public class MapManager
                 }
                 if (mouseState.RightButton == ButtonState.Pressed)
                 {
-                    var mouseDelta = new Vector2(_prevMouseState.X - mouseState.X, _prevMouseState.Y - mouseState.Y);
+                    var mouseDelta = new Vector2(_prevMouseX - ViewMouseX, _prevMouseY - ViewMouseY);
                     if (mouseDelta != Vector2.Zero)
                     {
                         var moveOffset = ScreenToMapCoordinates(mouseDelta.X, mouseDelta.Y) / Camera.Zoom;
@@ -565,7 +599,7 @@ public class MapManager
                 }
                 if (mouseState.MiddleButton == ButtonState.Pressed)
                 {
-                    var mouseDelta = new Vector2(_prevMouseState.X - mouseState.X, _prevMouseState.Y - mouseState.Y);
+                    var mouseDelta = new Vector2(_prevMouseX - ViewMouseX, _prevMouseY - ViewMouseY);
                     if (mouseDelta != Vector2.Zero)
                     {
                         var mod = 0.5f;
@@ -593,15 +627,17 @@ public class MapManager
                 ActiveTool.OnMouseReleased(Selected);
             }
         }
-        else
+        else if (isActiveWorld)
         {
             ActiveTool.OnMouseLeave(PrevSelected);
             ActiveTool.OnMouseReleased(PrevSelected);
             Selected = null;
         }
         _prevMouseState = mouseState;
+        _prevMouseX = ViewMouseX;
+        _prevMouseY = ViewMouseY;
 
-        if (processKeyboard)
+        if (isActiveWorld && processKeyboard)
         {
             foreach (var key in _keymap.GetKeysReleased())
             {
@@ -723,7 +759,8 @@ public class MapManager
         }
         if (Client.Running && AnimatedStatics)
         {
-            _animatedStaticsManager.Process(gameTime);
+            if (this == CEDGame.Worlds.Active?.Map)
+                _animatedStaticsManager.Process(gameTime);
             foreach (var animatedStaticTile in StaticsManager.AnimatedTiles)
             {
                 animatedStaticTile.UpdateId();
@@ -771,11 +808,7 @@ public class MapManager
 
     private void UpdateMouseSelection(int x, int y)
     {
-        if (!_selectionBuffer.Bounds.Contains(x, y))
-        {
-            RealSelected = null;
-        }
-        else if (CEDGame.UIManager.IsOverUI(x, y))
+        if (!ViewHovered || !_selectionBuffer.Bounds.Contains(x, y))
         {
             RealSelected = null;
         }
@@ -833,7 +866,7 @@ public class MapManager
 
     public Vector3 Unproject(int x, int y, int z)
     {
-        var worldPoint = _gfxDevice.Viewport.Unproject
+        var worldPoint = ViewportFromCamera().Unproject
         (
             new FNAVector3(x, y, -(z / 384f) + 0.5f),
             Camera.FnaWorldViewProj,
@@ -917,8 +950,8 @@ public class MapManager
         return show;
     }
 
-    private static Vector4 NonWalkableHue = HuesManager.Instance.GetRGBVector(Color.FromArgb(50, 0, 0));
-    private static Vector4 WalkableHue = HuesManager.Instance.GetRGBVector(Color.FromArgb(0, 50, 0));
+    private static Vector4 NonWalkableHue;
+    private static Vector4 WalkableHue;
     public Vector4 GhostLandTilesHue = Vector4.Zero;
     
     public bool IsWalkable(LandObject lo)
@@ -1014,16 +1047,16 @@ public class MapManager
         }
         Metrics.Measure("DrawSelection", DrawSelectionBuffer);
         Metrics.Start("GetMouseSelection");
-        UpdateMouseSelection(_prevMouseState.X, _prevMouseState.Y);
+        UpdateMouseSelection(ViewMouseX, ViewMouseY);
         Metrics.Stop("GetMouseSelection");
         if (DebugDrawSelectionBuffer)
             return;
-        
+
         Metrics.Measure("DrawLights", () => DrawLights(Camera));
         if (DebugDrawLightMap)
             return;
-        
-        _mapRenderer.SetRenderTarget(null);
+
+        _mapRenderer.SetRenderTarget(_worldRenderTarget, new FNARectangle(0, 0, _worldRenderTarget.Width, _worldRenderTarget.Height));
         Metrics.Measure("DrawImageOverlayBelow", () => DrawImageOverlay(false));
         Metrics.Measure("DrawLand", () => DrawLand(Camera, ViewRange));
         Metrics.Start("DrawLandGrid");
@@ -1051,15 +1084,13 @@ public class MapManager
 
     private void DrawBackground()
     {
-        _mapRenderer.SetRenderTarget(null);
-        _gfxDevice.Clear(FNAColor.Black);
+        _mapRenderer.SetRenderTarget(_worldRenderTarget, new FNARectangle(0, 0, _worldRenderTarget.Width, _worldRenderTarget.Height));
         _gfxDevice.BlendState = BlendState.AlphaBlend;
         _spriteBatch.Begin();
-        var windowRect = _gameWindow.ClientBounds;
         var backgroundRect = new FNARectangle
         (
-            windowRect.Width / 2 - _background.Width / 2,
-            windowRect.Height / 2 - _background.Height / 2,
+            _worldRenderTarget.Width / 2 - _background.Width / 2,
+            _worldRenderTarget.Height / 2 - _background.Height / 2,
             _background.Width,
             _background.Height
         );
@@ -1071,7 +1102,8 @@ public class MapManager
     {
         MapEffect.WorldViewProj = Camera.FnaWorldViewProj;
         MapEffect.CurrentTechnique = MapEffect.Techniques["Selection"];
-        _mapRenderer.SetRenderTarget(DebugDrawSelectionBuffer ? null : _selectionBuffer);
+        _mapRenderer.SetRenderTarget(DebugDrawSelectionBuffer ? null : _selectionBuffer,
+            new FNARectangle(0, 0, _selectionBuffer.Width, _selectionBuffer.Height));
         _mapRenderer.Begin
         (
             MapEffect,
@@ -1082,7 +1114,7 @@ public class MapManager
         );
         foreach (var (x,y) in ViewRange.Iterate())
         {
-            var landTile = LandTiles[x, y];
+            var landTile = GetLandObject(x, y);
             if (landTile != null)
             {
                 DrawLand(landTile, landTile.ObjectIdColor);
@@ -1109,7 +1141,8 @@ public class MapManager
         }
         MapEffect.WorldViewProj = camera.FnaWorldViewProj;
         MapEffect.CurrentTechnique = MapEffect.Techniques["Statics"];
-        _mapRenderer.SetRenderTarget(DebugDrawLightMap ? null : _lightMap);
+        _mapRenderer.SetRenderTarget(DebugDrawLightMap ? null : _lightMap,
+            new FNARectangle(0, 0, _lightMap.Width, _lightMap.Height));
         _gfxDevice.Clear(ClearOptions.Target, LightsManager.Instance.GlobalLightLevelColor, 0f, 0);
         _mapRenderer.Begin
         (
@@ -1153,7 +1186,7 @@ public class MapManager
            
         foreach (var (x,y) in viewRange.Iterate())
         {
-            var tile = LandTiles[x, y];
+            var tile = GetLandObject(x, y);
             if (tile != null && tile.CanDraw)
             {
                 var hueOverride = Vector4.Zero;
@@ -1184,7 +1217,7 @@ public class MapManager
         _spriteBatch.Begin();
         foreach (var (x, y) in ViewRange.Iterate())
         {
-            var tile = LandTiles[x, y];
+            var tile = GetLandObject(x, y);
             if (tile != null && tile.CanDraw)
             {
                 DrawTileHeight(tile, font, halfTile);
@@ -1202,13 +1235,12 @@ public class MapManager
         var text = tile.LandTile.Z.ToString();
         var halfTextSize = font.MeasureString(text) / 2;
         var tilePos = tile.Vertices[0].Position;
-        var projected = _gfxDevice.Viewport.Project
+        var projected = ViewportFromCamera().Project
             (new FNAVector3(tilePos.X, tilePos.Y, tilePos.Z), Camera.FnaWorldViewProj, Matrix.Identity, Matrix.Identity);
         var pos = new Vector2
             (projected.X - halfTextSize.X, projected.Y + yOffset);
-        var windowRect = _gameWindow.ClientBounds;
-        if (pos.X > 0 && pos.X < windowRect.Width && pos.Y > 0 &&
-            pos.Y < windowRect.Height)
+        if (pos.X > 0 && pos.X < Camera.ScreenSize.Width && pos.Y > 0 &&
+            pos.Y < Camera.ScreenSize.Height)
         {
             _spriteBatch.DrawString(font, text, new FNAVector2(pos.X, pos.Y), FNAColor.White);
         }
@@ -1381,29 +1413,42 @@ public class MapManager
     public void OnWindowsResized(GameWindow window)
     {
         var windowSize = window.ClientBounds;
-        Camera.ScreenSize = new Rectangle(windowSize.X, windowSize.Y, windowSize.Width, windowSize.Height);
+        Resize(windowSize.Width, windowSize.Height);
+    }
+
+    private int _pendingWidth, _pendingHeight;
+
+    public void Resize(int width, int height)
+    {
+        width = Math.Max(1, width);
+        height = Math.Max(1, height);
+        if (_worldRenderTarget != null && Camera.ScreenSize.Width == width && Camera.ScreenSize.Height == height)
+            return;
+        if (_worldRenderTarget != null && (width != _pendingWidth || height != _pendingHeight))
+        {
+            _pendingWidth = width;
+            _pendingHeight = height;
+            return;
+        }
+
+        Camera.ScreenSize = new Rectangle(0, 0, width, height);
         Camera.Update();
 
         _selectionBuffer?.Dispose();
-        _selectionBuffer = new RenderTarget2D
-        (
-            _gfxDevice,
-            windowSize.Width,
-            windowSize.Height,
-            false,
-            SurfaceFormat.Color,
-            DepthFormat.Depth24
-        );
+        _selectionBuffer = new RenderTarget2D(_gfxDevice, width, height, false, SurfaceFormat.Color, DepthFormat.Depth24);
         _lightMap?.Dispose();
-        _lightMap = new RenderTarget2D
-        (
-            _gfxDevice,
-            windowSize.Width,
-            windowSize.Height,
-            
-            false,
-            SurfaceFormat.Color,
-            DepthFormat.None
-        );
+        _lightMap = new RenderTarget2D(_gfxDevice, width, height, false, SurfaceFormat.Color, DepthFormat.None);
+        _worldRenderTarget?.Dispose();
+        _worldRenderTarget = new RenderTarget2D(_gfxDevice, width, height, false, SurfaceFormat.Color, DepthFormat.Depth24);
+    }
+
+    private Viewport ViewportFromCamera() => new(0, 0, Camera.ScreenSize.Width, Camera.ScreenSize.Height);
+
+    public void Dispose()
+    {
+        DisableBlockLoading();
+        _selectionBuffer?.Dispose();
+        _lightMap?.Dispose();
+        _worldRenderTarget?.Dispose();
     }
 }

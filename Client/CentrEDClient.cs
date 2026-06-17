@@ -17,6 +17,7 @@ public delegate void LogMessage(string message);
 public record struct User(string Username, AccessLevel AccessLevel, List<string> Regions);
 public record struct Region(string Name, List<RectU16> Areas);
 public record struct Admin(List<User> Users, List<Region> Regions);
+public record struct ServerFacet(int Index, string Name, ushort Width, ushort Height);
 
 public enum ClientState
 {
@@ -54,6 +55,16 @@ public sealed class CentrEDClient : ILogging
     internal TileDataLand[]? LandTileData;
     internal TileDataStatic[]? StaticTileData;
     public Admin Admin = new([], []);
+    public int Facet { get; private set; }
+    public List<ServerFacet> ServerFacets { get; } = new();
+    public event Action? ServerFacetsChanged;
+
+    internal void SetServerFacets(List<ServerFacet> facets)
+    {
+        ServerFacets.Clear();
+        ServerFacets.AddRange(facets);
+        ServerFacetsChanged?.Invoke();
+    }
 
     private void Reset()
     {
@@ -71,6 +82,8 @@ public sealed class CentrEDClient : ILogging
         RequestedBlocksQueue.Clear();
         RequestedBlocks.Clear();
         Clients.Clear();
+        ServerFacets.Clear();
+        Facet = 0;
         State = ClientState.Disconnected;
         ServerState = ServerState.Running;
         Status = "";
@@ -86,12 +99,13 @@ public sealed class CentrEDClient : ILogging
         ns.RegisterPacketHandler(0x0D, 0, RadarMap.OnRadarHandlerPacket);
     }
 
-    public void Connect(string hostname, int port, string username, string password)
+    public void Connect(string hostname, int port, string username, string password, int facet = 0)
     {
         Reset();
         Hostname = hostname;
         Port = port;
         Password = password;
+        Facet = facet;
         var ipAddress = Dns.GetHostAddresses(hostname)[0];
         var ipEndPoint = new IPEndPoint(ipAddress, port);
         var socket = new Socket(ipEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
@@ -100,6 +114,8 @@ public sealed class CentrEDClient : ILogging
         NetState = new NetState<CentrEDClient>(this, socket, recvPipeSize: RecvPipeSize);
         RegisterPacketHandlers(NetState);
         NetState.Username = username;
+        if (facet > 0)
+            NetState.Send(new SelectFacetPacket(facet));
         NetState.Send(new LoginRequestPacket(username, password));
         NetState.Flush();
         

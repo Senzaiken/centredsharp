@@ -6,6 +6,8 @@ namespace CentrED.Map;
 public class StaticsManager
 {
     private static readonly ReadOnlyCollection<StaticObject> EMPTY = [];
+
+    public MapManager MapManager = null!;
     
     private ushort _Width;
     private ushort _Height;
@@ -62,7 +64,7 @@ public class StaticsManager
 
     public ReadOnlyCollection<StaticObject> Get(ushort x, ushort y)
     {
-        if (x > _Width || y > _Height)
+        if (x >= _Width || y >= _Height)
             return EMPTY;
         var list = _tiles[Index(x, y)];
         return list?.AsReadOnly() ?? EMPTY;
@@ -78,7 +80,7 @@ public class StaticsManager
     
     public void Add(StaticTile staticTile)
     {
-        var so = new StaticObject(staticTile);
+        var so = new StaticObject(staticTile, MapManager);
         var index = Index(staticTile);
         var list = _tiles[index];
         if (list == null)

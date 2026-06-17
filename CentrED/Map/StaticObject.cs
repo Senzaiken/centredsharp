@@ -15,13 +15,14 @@ public class StaticObject : TileObject, IComparable<StaticObject>
     public bool IsLight;
     public Rectangle RealBounds;
 
-    public StaticObject(StaticTile tile)
+    public StaticObject(StaticTile tile, MapManager? mapManager = null)
     {
+        MapManager = mapManager ?? CEDGame.MapManager;
         //Static are constructed from two rectangles
         Vertices = new MapVertex[8];
         Tile = StaticTile = tile;
-        
-        var realBounds = CEDGame.MapManager.Arts.GetRealArtBounds(Tile.Id);
+
+        var realBounds = MapManager.Arts.GetRealArtBounds(Tile.Id);
         RealBounds = new Rectangle(realBounds.X, realBounds.Y, realBounds.Width, realBounds.Height);
         UpdateId(Tile.Id);
         UpdatePos(tile.X, tile.Y, tile.Z);
@@ -30,7 +31,7 @@ public class StaticObject : TileObject, IComparable<StaticObject>
         {
             Vertices[i].Normal = Vector3.Zero;
         }
-        var tiledata = CEDGame.MapManager.UoFileManager.TileData.StaticData[Tile.Id];
+        var tiledata = MapManager.UoFileManager.TileData.StaticData[Tile.Id];
         IsAnimated = tiledata.IsAnimated;
         IsLight = tiledata.IsLight;
     }
@@ -48,7 +49,7 @@ public class StaticObject : TileObject, IComparable<StaticObject>
     
     public void UpdateId(ushort newId)
     {
-        var mapManager = CEDGame.MapManager;
+        var mapManager = MapManager;
         ref var index = ref mapManager.UoFileManager.Arts.File.GetValidRefEntry(newId + 0x4000);
         var spriteInfo = mapManager.Arts.GetArt((uint)(newId + index.AnimOffset));
         if (spriteInfo.Equals(SpriteInfo.Empty))
@@ -97,7 +98,7 @@ public class StaticObject : TileObject, IComparable<StaticObject>
     {
         var posX = newX * TILE_SIZE;
         var posY = newY * TILE_SIZE;
-        var posZ = CEDGame.MapManager.FlatView ? 0 : newZ * TILE_Z_SCALE;
+        var posZ = MapManager.FlatView ? 0 : newZ * TILE_Z_SCALE;
 
         float projectedWidth = TextureBounds.Width  * RSQRT2;
         float halfWidth = TextureBounds.Width * 0.5f;

@@ -15,8 +15,10 @@ public class CentrEDGame : Game
     public readonly GraphicsDeviceManager _gdm;
 
     private Keymap _keymap;
-    public MapManager MapManager;
+    public WorldManager Worlds = new();
+    public MapManager MapManager => Worlds.Active!.Map;
     public UIManager UIManager;
+    public FacetController FacetController;
     public bool Closing { get; set; }
     
     public CentrEDGame()
@@ -54,8 +56,11 @@ public class CentrEDGame : Game
         //UIManager have to exist before MapManager, since Tools can be dependent on Windows
         _keymap =  new Keymap();
         UIManager = new UIManager(_gdm.GraphicsDevice, Window, _keymap);
-        MapManager = new MapManager(_gdm.GraphicsDevice, Window, _keymap);
-        RadarMap.Initialize(_gdm.GraphicsDevice);
+        Worlds.Initialize(_gdm.GraphicsDevice, Window, _keymap);
+        Worlds.CreateWorld(Application.BootstrapClient);
+        FacetController = new FacetController();
+        FacetController.Refresh();
+        FacetController.SyncWorlds();
 
         base.Initialize();
     }
@@ -69,6 +74,7 @@ public class CentrEDGame : Game
     protected override void UnloadContent()
     {
         CEDClient.Disconnect();
+        FacetController?.Shutdown();
     }
 
     protected override void Update(GameTime gameTime)
@@ -76,11 +82,25 @@ public class CentrEDGame : Game
         try
         {
             _keymap.Update(Keyboard.GetState());
+            FacetController.ProcessSync();
+            foreach (var world in Worlds.Worlds)
+            {
+                if (world.Map.WindowVisible)
+                    FacetController.EnsureLoaded(world);
+            }
             Metrics.Start("UpdateClient");
-            if(CEDClient.Running)
-                CEDClient.Update();
+            foreach (var world in Worlds.Worlds)
+            {
+                if (world.Client.Running && !FacetController.IsBusy(world))
+                    world.Client.Update();
+            }
             Metrics.Stop("UpdateClient");
-            MapManager.Update(gameTime, IsActive, !UIManager.CapturingMouse, !UIManager.CapturingKeyboard);
+            foreach (var world in Worlds.Worlds)
+            {
+                if (FacetController.IsBusy(world) || !world.Map.WindowVisible)
+                    continue;
+                world.Map.Update(gameTime, IsActive, world.Map.ViewHovered, world.Map.ViewFocused);
+            }
             Config.AutoSave();
         }
         catch(Exception e)
@@ -119,11 +139,19 @@ public class CentrEDGame : Game
             try
             {
                 Metrics.Start("Draw");
-                MapManager.Draw();
+                foreach (var world in Worlds.Worlds)
+                {
+                    if (FacetController.IsBusy(world) || !world.Map.WindowVisible)
+                        continue;
+                    world.Map.Draw();
+                }
+                GraphicsDevice.SetRenderTarget(null);
+                GraphicsDevice.Clear(Color.Black);
                 UIManager.Draw();
                 Present();
                 UIManager.DrawExtraWindows();
-                MapManager.AfterDraw();
+                foreach (var world in Worlds.Worlds)
+                    world.Map.AfterDraw();
                 Metrics.Stop("Draw");
             }
             catch (Exception e)

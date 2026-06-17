@@ -4,6 +4,7 @@ public abstract class TileObject : MapObject
 {
     public BaseTile Tile;
     public bool? Walkable;
+    public MapManager MapManager = null!;
 
     public virtual void Reset()
     {

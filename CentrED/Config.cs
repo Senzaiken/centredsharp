@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using CentrED.IO.Models;
 using Microsoft.Xna.Framework.Input;
 
@@ -16,10 +18,36 @@ public class ImageOverlaySettings
     public float Screen = 0.0f;
 }
 
+public class FacetOverride
+{
+    public int Index;
+    public string Name = "";
+    public int Width;
+    public int Height;
+}
+
+public class FacetSettings
+{
+    public string MapsFolder = "";
+    public int BasePort = 2598;
+    public List<FacetOverride> Overrides = new();
+
+    [JsonIgnore] public string AdminUsername => "admin";
+    [JsonIgnore] public string AdminPassword { get; } = GenerateSecret();
+
+    private static string GenerateSecret()
+    {
+        Span<byte> bytes = stackalloc byte[24];
+        RandomNumberGenerator.Fill(bytes);
+        return Convert.ToHexString(bytes);
+    }
+}
+
 public class ConfigRoot
 {
     public string ActiveProfile = "";
     public string ServerConfigPath = "cedserver.xml";
+    public FacetSettings Facets = new();
     public bool PreferTexMaps;
     public bool ObjectBrightHighlight;
     public bool LegacyMouseScroll;

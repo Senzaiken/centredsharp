@@ -4,15 +4,18 @@ namespace CentrED.Server.Config;
 
 public class Map
 {
+    public string Name { get; set; } = "";
     public string MapPath { get; set; } = "map0.mul";
     public string StaIdx { get; set; } = "staidx0.mul";
     public string Statics { get; set; } = "statics0.mul";
     public ushort Width { get; set; } = 896;
     public ushort Height { get; set; } = 512;
 
-    internal void Write(XmlWriter writer)
+    internal void Write(XmlWriter writer, string element = "Map")
     {
-        writer.WriteStartElement("Map");
+        writer.WriteStartElement(element);
+        if (!string.IsNullOrEmpty(Name))
+            writer.WriteElementString("Name", Name);
         writer.WriteElementString("Map", MapPath);
         writer.WriteElementString("StaIdx", StaIdx);
         writer.WriteElementString("Statics", Statics);
@@ -32,6 +35,9 @@ public class Map
             {
                 switch (sub.Name)
                 {
+                    case "Name":
+                        result.Name = sub.ReadElementContentAsString();
+                        break;
                     case "Map":
                         result.MapPath = sub.ReadElementContentAsString();
                         break;

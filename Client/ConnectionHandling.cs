@@ -15,6 +15,23 @@ public static class ConnectionHandling
         Handlers[0x03] = new PacketHandler<CentrEDClient>(0, OnLoginResponsePacket);
         Handlers[0x04] = new PacketHandler<CentrEDClient>(0, OnServerStatePacket);
         Handlers[0x05] = new PacketHandler<CentrEDClient>(0, OnQuitAckPacket);
+        Handlers[0x22] = new PacketHandler<CentrEDClient>(0, OnFacetListPacket);
+    }
+
+    private static void OnFacetListPacket(SpanReader reader, NetState<CentrEDClient> ns)
+    {
+        ns.LogDebug("Client OnFacetListPacket");
+        var count = reader.ReadByte();
+        var facets = new List<ServerFacet>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var index = reader.ReadByte();
+            var width = reader.ReadUInt16();
+            var height = reader.ReadUInt16();
+            var name = reader.ReadString();
+            facets.Add(new ServerFacet(index, name, width, height));
+        }
+        ns.Parent.SetServerFacets(facets);
     }
 
     public static void OnConnectionHandlerPacket(SpanReader reader, NetState<CentrEDClient> ns)
